@@ -202,4 +202,4 @@ Use at your own risk.
     [Issues](https://github.com/Altus-v97/ps5-exfat-builder-linux/issues)
 -   ❤️ Support the original developer and the PS5 Homebrew community
 
-Made with ☕ and a passion for PS5 homebrew.
+Made with Claude Code and a passion for PSX homebrew.
