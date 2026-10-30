@@ -3,6 +3,12 @@
 # single-file binary. Run from the repo root. Uses a local .venv so the
 # system Python is left alone.
 #
+#   ./build_linux.sh            binary only
+#   ./build_linux.sh --package  also a .tar.gz and .deb (packaging/linux/package.sh)
+#
+# The binary runs on distros whose glibc is at least as new as the build
+# machine's, so build release packages on an old distro (see README_LINUX.md).
+#
 # Needs: python3 (3.11+) with tkinter + venv
 #   Debian/Ubuntu: sudo apt install python3-tk python3-venv
 #   Fedora:        sudo dnf install python3-tkinter
@@ -36,26 +42,9 @@ echo "Installing dependencies..."
 echo
 
 echo "Building exfat-image-builder (Full version)..."
-"$VPY" -m PyInstaller --onefile --windowed --clean --noconfirm \
-    --name "exfat-image-builder" \
-    --hidden-import linux_image_builder \
-    --hidden-import PIL._tkinter_finder \
-    --hidden-import psutil \
-    --hidden-import mkpfs \
-    --hidden-import mkpfs.__main__ \
-    --hidden-import mkpfs.cli \
-    --hidden-import mkpfs.pfs \
-    --hidden-import mkpfs.utils \
-    --hidden-import mkpfs.consts \
-    --hidden-import mkpfs.logging \
-    --hidden-import mkpfs.pbar \
-    --collect-all mkpfs \
-    --collect-all cryptography \
-    --collect-all tkinterdnd2 \
-    --collect-submodules ui \
-    --collect-submodules ui.shared \
-    --paths . \
-    exfat_builder.py
+# Options live in the spec (it also keeps the X11/font libs out of the
+# bundle so the desktop's own copies are used).
+"$VPY" -m PyInstaller --clean --noconfirm packaging/linux/exfat-image-builder.spec
 echo
 
 if [ -f exfat_builder_lite.py ]; then
@@ -72,4 +61,7 @@ fi
 (cd dist && sha256sum exfat-image-builder > exfat-image-builder.sha256)
 echo
 echo "Done! Binary: dist/exfat-image-builder  (SHA256 in dist/exfat-image-builder.sha256)"
+if [ "${1:-}" = "--package" ]; then
+    VPY="$VPY" packaging/linux/package.sh
+fi
 echo "Runtime needs exfatprogs, plus udisks2 or exfat-fuse for mounting - see README_LINUX.md."

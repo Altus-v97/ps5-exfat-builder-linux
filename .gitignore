@@ -7,6 +7,7 @@
 build/
 dist/
 *.spec
+!/packaging/linux/exfat-image-builder.spec
 *.manifest
 
 # Built executables (ship these as GitHub Release assets, not in the repo)

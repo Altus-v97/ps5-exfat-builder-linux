@@ -20,11 +20,34 @@ Debian/Ubuntu in one line:
 sudo apt install exfatprogs udisks2 exfat-fuse python3-tk fonts-noto-color-emoji
 ```
 
+## Install a package
+
+Release packages run on any x86-64 distro from roughly 2019 on (glibc 2.31+:
+Ubuntu 20.04+, Mint 20+, Debian 11+, Fedora 32+).
+
+**Debian / Ubuntu / Mint (`.deb`)** — pulls in exfatprogs and the X11 libs:
+
+```bash
+sudo apt install ./exfat-image-builder_3.6.4_amd64.deb
+```
+
+Remove with `sudo apt remove exfat-image-builder`.
+
+**Any distro (`.tar.gz`)** — installs into your home folder, no root:
+
+```bash
+tar -xzf exfat-image-builder-3.6.4-linux-x86_64.tar.gz
+cd exfat-image-builder-3.6.4
+./install.sh            # ./install.sh --uninstall to remove
+```
+
+Either way, start **exFAT Image Builder** from your app menu or run
+`exfat-image-builder`. No root needed: the app only asks for privileges at
+the moment it mounts an image.
+
 ## Run it
 
-**Prebuilt binary** — after building (below) run `dist/exfat-image-builder`.
-No root needed: the app only asks for privileges at the moment it mounts
-an image.
+**Built binary** — after building (below) run `dist/exfat-image-builder`.
 
 **From source:**
 
@@ -42,7 +65,26 @@ python3 -m venv .venv
 
 It creates a local `.venv`, installs the dependencies and runs
 PyInstaller. Output: `dist/exfat-image-builder` (single file) plus its
-`.sha256`.
+`.sha256`. Add `--package` to also get the `.tar.gz` and `.deb`
+(`packaging/linux/package.sh`).
+
+### Release packages
+
+A binary only runs on distros whose glibc is at least as new as the build
+machine's, and Tcl/Tk is bundled from the Python used to build. Release
+packages are therefore built on Debian 11 with a
+[python-build-standalone](https://github.com/astral-sh/python-build-standalone)
+Python, which brings a current Tcl/Tk (Debian 11's Tk 8.6.11 crashes on the
+emoji used throughout the UI):
+
+```bash
+docker run --rm -it -v "$PWD":/src -w /src python:3.11-bullseye bash -c '
+  pip install uv && uv python install 3.11 &&
+  PYTHON=$(uv python find 3.11) ./build_linux.sh --package'
+```
+
+The X11 / font libraries are deliberately not bundled (see
+`packaging/linux/exfat-image-builder.spec`); the desktop's own copies are used.
 
 ## How an exFAT build works on Linux
 

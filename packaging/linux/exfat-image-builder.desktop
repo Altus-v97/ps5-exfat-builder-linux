@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=exFAT Image Builder
+Comment=Build, edit and convert PS5 game images
+Exec=exfat-image-builder
+Icon=exfat-image-builder
+Terminal=false
+Categories=Utility;
+Keywords=PS5;exFAT;FFPKG;image;
