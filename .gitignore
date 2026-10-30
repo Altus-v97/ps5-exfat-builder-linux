@@ -90,6 +90,7 @@ exfat_builder_v*.zip
 # .md is ignored by default — un-ignore it explicitly if it should ship.
 /*.md
 !/README.md
+!/README_LINUX.md
 !/CHANGELOG.md
 
 # Scratch prototype (not imported by the app — design exploration only)

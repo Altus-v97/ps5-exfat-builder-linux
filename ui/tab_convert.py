@@ -327,9 +327,10 @@ def build_convert_tab(parent, app):
 
     def _get_ufs2tool_exe():
         try:
-            from exfat_builder import extract_ufs2tool, _UFS2TOOL_DIR
+            from exfat_builder import (extract_ufs2tool, _UFS2TOOL_DIR,
+                                       UFS2TOOL_LAUNCHER)
             if _UFS2TOOL_DIR and os.path.isdir(_UFS2TOOL_DIR):
-                exe = os.path.join(_UFS2TOOL_DIR, 'UFS2Tool.exe')
+                exe = os.path.join(_UFS2TOOL_DIR, UFS2TOOL_LAUNCHER)
                 if os.path.isfile(exe):
                     return exe
             return extract_ufs2tool(

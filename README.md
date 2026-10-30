@@ -27,6 +27,9 @@ from one modern interface.
 
 Designed for speed, reliability and ease of use.
 
+> 🐧 **Linux:** build with `./build_linux.sh` — see
+> [README_LINUX.md](README_LINUX.md) for setup and feature status.
+
 > ⚠️ **Homebrew & Personal Backup Tool**
 >
 > This software is intended only for games and content **you legally own

@@ -12,6 +12,7 @@ import time
 import re
 import struct
 import json
+import shlex
 
 # ── tkinterdnd2 — optional, enables drag & drop of folders ──
 try:
@@ -22,6 +23,20 @@ except Exception:
     _DND_AVAILABLE = False
     _TK_BASE = tk.Tk
     DND_FILES = 'DND_Files'
+
+IS_WINDOWS = sys.platform.startswith('win')
+
+# ── Linux/macOS: give os.startfile a cross-platform stand-in ──
+# os.startfile is Windows-only, but ~15 call sites here and in ui/ use
+# it to open folders/files in the host file manager. Route them to
+# xdg-open (or `open` on macOS) instead of patching every caller.
+if not hasattr(os, 'startfile'):
+    def _startfile(path, *_args, **_kw):
+        opener = 'open' if sys.platform == 'darwin' else 'xdg-open'
+        subprocess.Popen([opener, os.fspath(path)],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+    os.startfile = _startfile
 
 # ── DPI awareness — fixes blurry/clipped UI on high-DPI and dual-GPU laptops ──
 try:
@@ -58,6 +73,21 @@ def _silent_startupinfo():
         return si
     except Exception:
         return None
+
+
+def _drive_root(drive):
+    """Filesystem root for a mounted image: 'E:' -> 'E:\\' on Windows,
+    a Linux mount point path is already a root."""
+    return drive + '\\' if re.match(r'^[A-Za-z]:$', drive) else drive
+
+
+def _image_worker_argv():
+    """argv prefix that runs linux_image_builder in a child process. A
+    frozen (PyInstaller) build re-runs its own binary with a worker flag;
+    from source it re-runs this script."""
+    if getattr(sys, 'frozen', False):
+        return [sys.executable, '--__exfat_image_worker__']
+    return [sys.executable, os.path.abspath(__file__), '--__exfat_image_worker__']
 
 APP_VERSION = '3.6.4'
 KOFI_URL = 'https://ko-fi.com/deckerr9746220'
@@ -616,6 +646,8 @@ def extract_backport(custom_temp=None):
 
     return bp_path, tmp
 
+UFS2TOOL_LAUNCHER = 'UFS2Tool.exe' if IS_WINDOWS else 'UFS2Tool.sh'
+
 def extract_ufs2tool(custom_temp=None):
     """Extract UFS2Tool.exe, UFS2Tool.dll and DokanNet.dll to a temp folder."""
     global _UFS2TOOL_DIR
@@ -638,7 +670,15 @@ def extract_ufs2tool(custom_temp=None):
         path = os.path.join(_UFS2TOOL_DIR, name)
         with open(path, 'wb') as f:
             f.write(base64.b64decode(b64))
-    return os.path.join(_UFS2TOOL_DIR, 'UFS2Tool.exe')
+    if not IS_WINDOWS:
+        # UFS2Tool.dll is portable .NET 8 (only its device/Dokan commands
+        # are Windows-only). Hand callers a launcher so their
+        # [exe, 'newfs', ...] argv lists work unchanged.
+        launcher = os.path.join(_UFS2TOOL_DIR, UFS2TOOL_LAUNCHER)
+        with open(launcher, 'w') as f:
+            f.write('#!/bin/sh\nexec dotnet "$(dirname "$0")/UFS2Tool.dll" "$@"\n')
+        os.chmod(launcher, 0o755)
+    return os.path.join(_UFS2TOOL_DIR, UFS2TOOL_LAUNCHER)
 
 def cleanup_ufs2tool():
     global _UFS2TOOL_DIR
@@ -668,6 +708,8 @@ def clear_temp_folder(base_dir):
     return True, removed, size
 
 def is_admin():
+    if not IS_WINDOWS:
+        return os.geteuid() == 0
     try:
         return ctypes.windll.shell32.IsUserAnAdmin()
     except Exception:
@@ -688,7 +730,9 @@ def relaunch_as_admin():
         messagebox.showerror('Elevation failed', str(e))
     sys.exit(0)
 
-if not is_admin():
+# Linux runs unprivileged: linux_image_builder only needs elevation to
+# mount the image, and asks for it (udisks / sudo / pkexec) at that step.
+if IS_WINDOWS and not is_admin():
     relaunch_as_admin()
 
 # ── Theme ────────────────────────────────────────────────────────────────────
@@ -3252,7 +3296,14 @@ class ExFATBuilder(_TK_BASE):
                   command=dlg.destroy).pack(pady=(0, 16))
 
     def __init__(self):
-        super().__init__()
+        try:
+            super().__init__()
+        except RuntimeError:
+            # tkinterdnd2 creates the Tk root first, then loads its native
+            # tkdnd library — which fails on Linux boxes missing libXcursor
+            # etc. The window is already up; carry on without drag & drop
+            # (every drop_target_register call is wrapped in try/except).
+            pass
         # Identity of the Tk/main thread. Used by _log (and any other
         # widget-touching helper) to detect when it's being called from a
         # worker thread and reschedule onto the main thread via after().
@@ -5800,9 +5851,26 @@ class ExFATBuilder(_TK_BASE):
             self.build_btn.config(state='disabled', text='Building...')
             self._process_next([index], 0)
 
+    def _image_tools_found(self):
+        if IS_WINDOWS:
+            return bool(self._find_osfmount())
+        return bool(shutil.which('mkfs.exfat'))
+
+    def _image_tools_name(self):
+        return 'OSFMount' if IS_WINDOWS else 'exfatprogs (mkfs.exfat)'
+
     def _check_osfmount_banner(self):
-        if self._find_osfmount():
+        if self._image_tools_found():
             return  # All good, no banner needed
+        if not IS_WINDOWS:
+            banner = tk.Frame(self, bg='#3a1500',
+                              highlightbackground='#ff6600', highlightthickness=1)
+            banner.pack(fill='x', padx=24, pady=(4, 0))
+            tk.Label(banner, text='⚠  mkfs.exfat not found  —  install '
+                     'exfatprogs to build images (e.g. sudo apt install exfatprogs)',
+                     font=('Segoe UI', 9, 'bold'),
+                     bg='#3a1500', fg='#ff9944').pack(side='left', padx=12, pady=8)
+            return
         # Show warning banner under header
         banner = tk.Frame(self, bg='#3a1500',
                           highlightbackground='#ff6600', highlightthickness=1)
@@ -8322,14 +8390,16 @@ class ExFATBuilder(_TK_BASE):
 
         # ── Detect mounted drive letter from PS5 output ──
         if not self._mounted_drive:
-            m = re.search(r'logical volume on ([A-Z]:)', line)
+            # Windows: a drive letter ("E:"). Linux: a mount point path.
+            m = (re.search(r'logical volume on ([A-Z]:)', line)
+                 or re.search(r'logical volume on (/.*?)\s*$', line))
             if m:
                 self._mounted_drive = m.group(1)
 
         # ── When copy phase starts, snapshot free space and begin polling ──
         if '[3/4]' in line and self._mounted_drive and self._drive_poll_id is None:
             try:
-                usage = shutil.disk_usage(self._mounted_drive + '\\')
+                usage = shutil.disk_usage(_drive_root(self._mounted_drive))
                 self._image_total_gb  = usage.total / (1024 ** 3)
                 self._copy_start_free = usage.free
                 self._copy_start_time = time.time()
@@ -8835,6 +8905,19 @@ class ExFATBuilder(_TK_BASE):
                + cluster_arg + '" "' + sector_arg + '" "' + threads_arg
                + '" "' + retries_arg + '" "' + rwait_arg + '" "' + excl_hidden
                + '" "' + img_override + '"')
+        if not IS_WINDOWS:
+            # Linux: linux_image_builder replaces the BAT + PS1 pair and
+            # prints the same progress markers. Run as an argv list (no
+            # shell), so titles with quotes/$/& can't break the command.
+            cmd = _image_worker_argv() + [out_path, item.game_folder,
+                   '--sector-size', sector_arg, '--threads', threads_arg,
+                   '--retries', retries_arg, '--retry-wait', rwait_arg]
+            if cluster_arg:
+                cmd += ['--cluster-size', cluster_arg]
+            if excl_hidden == '1':
+                cmd.append('--exclude-hidden')
+            if img_override:
+                cmd += ['--image-size-gb', img_override]
 
         # Pre-flight: re-extract scripts if the temp dir was wiped.
         # Windows Storage Sense, antivirus quarantines, and long-running
@@ -8843,7 +8926,7 @@ class ExFATBuilder(_TK_BASE):
         # fails with "WinError 267 - The directory name is invalid"
         # because cwd=bat_dir points at a folder that no longer exists.
         try:
-            if not os.path.isfile(self._bat_path):
+            if IS_WINDOWS and not os.path.isfile(self._bat_path):
                 self._log('[INFO] Script temp dir missing - re-extracting...\n')
                 custom_temp = self._settings.get('temp_dir') or None
                 self._bat_path, _ico_path = extract_scripts(custom_temp)
@@ -8860,6 +8943,11 @@ class ExFATBuilder(_TK_BASE):
             # Let the Popen below fail with its native error; we tried.
 
         bat_dir = os.path.dirname(self._bat_path)
+        if not IS_WINDOWS:
+            bat_dir = os.path.dirname(out_path)
+            cmd_text = ' '.join(shlex.quote(a) for a in cmd)
+        else:
+            cmd_text = cmd
         total   = len(indices)
         display = item.game_title or os.path.basename(item.game_folder)
         label   = 'Building %d/%d: %s' % (pos + 1, total, display)
@@ -8868,7 +8956,7 @@ class ExFATBuilder(_TK_BASE):
         self._start_time = time.time()
         self._set_status(label, ACCENT)
         self._log_clear()
-        self._log('[' + str(pos + 1) + '/' + str(total) + '] ' + cmd + '\n\n')
+        self._log('[' + str(pos + 1) + '/' + str(total) + '] ' + cmd_text + '\n\n')
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         self._log('[BUILD] Output folder ready: %s\n'
                   % os.path.dirname(out_path))
@@ -8967,7 +9055,7 @@ class ExFATBuilder(_TK_BASE):
                 _enc = 'mbcs' if sys.platform.startswith('win') else 'utf-8'
                 try:
                     proc = subprocess.Popen(
-                        cmd, shell=True, cwd=bat_dir,
+                        cmd, shell=IS_WINDOWS, cwd=bat_dir,
                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                         text=True, encoding=_enc, errors='replace',
                         env=build_env,
@@ -9004,7 +9092,9 @@ class ExFATBuilder(_TK_BASE):
                 # with up to ~30s total budget — long enough for
                 # Defender's post-copy scan to settle.
                 mounted = self._mounted_drive
-                if mounted:
+                # Linux: linux_image_builder unmounts itself (mount
+                # points, not drive letters) — this safety net is Windows-only.
+                if mounted and IS_WINDOWS:
                     # CRITICAL: kill our drive-poll loop before attempting
                     # dismount. The poll holds a Win32 handle on the
                     # drive via shutil.disk_usage — that handle blocks
@@ -9549,6 +9639,57 @@ class ExFATBuilder(_TK_BASE):
         self._set_status('▶ Resumed', SUCCESS)
         self._process_next(self._paused_indices, self._paused_pos)
 
+    def _extract_linux_worker(self, img_path, dest_folder):
+        """Linux Extract: mount the image read-only through
+        linux_image_builder's mount chain, copy everything out, unmount.
+        Progress comes from watching the destination grow, like the
+        Windows robocopy path."""
+        import linux_image_builder as lib
+        start = time.time()
+        mnt = None
+        run = {'on': False}
+        try:
+            os.makedirs(dest_folder, exist_ok=True)
+            self.after(0, self._extract_status_var.set, 'Mounting image...')
+            mnt = lib.mount_image(img_path,
+                                  os.environ.get('EXFAT_MOUNT_METHOD', 'auto'),
+                                  readonly=True)
+            self.after(0, self._elog, '[EXTRACT] Mounted (%s) on %s\n'
+                       % (mnt.method, mnt.path))
+            self.after(0, self._extract_status_var.set, 'Scanning image…')
+            total = self._get_folder_size(mnt.path)
+            self.after(0, self._elog,
+                '[EXTRACT] Total: %.2f GB to copy\n' % (total / 1024**3))
+            self.after(0, self._extract_status_var.set, 'Copying files…')
+
+            run['on'] = True
+
+            def _poll():
+                while run['on']:
+                    cur = self._get_folder_size(dest_folder)
+                    el = max(0.001, time.time() - start)
+                    pct = int(min(99.0, cur * 100.0 / total)) if total else 0
+                    self.after(0, self._update_extract_bar, pct)
+                    self.after(0, self._extract_eta_var.set,
+                               'Elapsed: %dm %02ds  ·  %.0f MB/s'
+                               % (int(el // 60), int(el % 60), cur / el / 1048576))
+                    time.sleep(2)
+
+            threading.Thread(target=_poll, daemon=True).start()
+            shutil.copytree(mnt.path, dest_folder, dirs_exist_ok=True)
+            run['on'] = False
+            self.after(0, self._update_extract_bar, 100)
+            el = time.time() - start
+            self.after(0, self._extract_done, True, dest_folder,
+                       int(el // 60), int(el % 60))
+        except Exception as e:
+            self.after(0, self._extract_done, False, str(e), 0, 0)
+        finally:
+            run['on'] = False
+            if mnt:
+                self.after(0, self._elog, '\n[EXTRACT] Unmounting...\n')
+                mnt.unmount()
+
     def _run_extract(self):
         img_path = self._extract_file_var.get().strip()
         out_dir  = self._extract_outdir_var.get().strip()
@@ -9587,6 +9728,12 @@ class ExFATBuilder(_TK_BASE):
         # and OSFMount v3+ (which ships only OSFMount.exe). Step 48
         # (v2.6.1): the old hardcoded three-path scan rejected installs
         # outside Program Files and the modern .exe-only layout.
+        if not IS_WINDOWS:
+            threading.Thread(target=self._extract_linux_worker,
+                             args=(img_path, dest_folder),
+                             daemon=True).start()
+            return
+
         osf = self._find_osfmount()
         if not osf:
             messagebox.showerror('OSFMount not found',
@@ -9785,10 +9932,10 @@ class ExFATBuilder(_TK_BASE):
 
         # ── Pre-build checklist ──
         issues = []
-        # 1. OSFMount installed?
-        osf = self._find_osfmount()
-        if not osf:
-            issues.append('OSFMount is not installed — required for building images.')
+        # 1. Image tools installed? (OSFMount on Windows, exfatprogs on Linux)
+        if not self._image_tools_found():
+            issues.append(self._image_tools_name() + ' is not installed — '
+                          'required for building images.')
         # 2. Per-item checks
         for i in waiting:
             item = self._queue[i]
@@ -16912,7 +17059,12 @@ class ExFATBuilder(_TK_BASE):
     def _execute_shutdown(self, action):
         import subprocess as _sp
         try:
-            if action == 'shutdown':
+            if not IS_WINDOWS:
+                verb = {'shutdown': 'poweroff', 'restart': 'reboot',
+                        'sleep': 'suspend'}.get(action)
+                if verb:
+                    _sp.run(['systemctl', verb])
+            elif action == 'shutdown':
                 _sp.run(['shutdown', '/s', '/t', '5',
                          '/c', 'exFAT Image Builder task complete'],
                         creationflags=_sp.CREATE_NO_WINDOW)
@@ -19944,6 +20096,10 @@ class ExFATBuilder(_TK_BASE):
             return False, 'sanity check errored: ' + str(e)
 
     def _verify_image(self, out_path, src_folder):
+        if not IS_WINDOWS:
+            # linux_image_builder already checked bytes-on-volume and ran
+            # fsck.exfat -n on the unmounted image before reporting success.
+            return True, 'checked by fsck.exfat during build'
         osf = self._find_osfmount()
         if not osf:
             return True, 'OSFMount not found — skipping verify'
@@ -21415,7 +21571,7 @@ class ExFATBuilder(_TK_BASE):
                 return
             self._dest_walk_running = True
 
-            def _walk(drive_root=drive + '\\'):
+            def _walk(drive_root=_drive_root(drive)):
                 count = 0
                 try:
                     for _r, _d, files in os.walk(drive_root):
@@ -21571,7 +21727,7 @@ class ExFATBuilder(_TK_BASE):
             self._drive_poll_id = self.after(2000, self._poll_drive)
             return
         try:
-            usage = shutil.disk_usage(self._mounted_drive + '\\')
+            usage = shutil.disk_usage(_drive_root(self._mounted_drive))
             free_gb  = usage.free  / (1024 ** 3)
             image_gb = usage.total / (1024 ** 3)   # full image CAPACITY
 
@@ -22126,6 +22282,17 @@ class ExFATBuilder(_TK_BASE):
         # Belt-and-braces: strip any v/V prefix that snuck through so we
         # never produce 'vV2.7.0' style display strings.
         clean = str(version).strip().lstrip('vV').strip()
+        if not IS_WINDOWS:
+            # The auto-installer downloads the Windows .exe and swaps it
+            # in with a .bat — Linux builds can only point at the releases.
+            if messagebox.askyesno(
+                    'Update available',
+                    'v' + clean + ' is available!\n\n'
+                    'Current version: v' + APP_VERSION + '\n\n'
+                    'Open the GitHub releases page?'):
+                import webbrowser
+                webbrowser.open('https://github.com/kerrdec97/ps5-exfat-builder/releases')
+            return
         ans = messagebox.askyesnocancel(
             'Update available',
             'v' + clean + ' is available!\n\n'
@@ -23149,6 +23316,12 @@ if __name__ == '__main__':
     # we are that process: run mkpfs straight to the real stdout/stderr and
     # exit, with NO GUI and NO stream hijacking. mkpfs's own Pool workers
     # then re-exec THIS shim (clean, GUI-free) rather than the GUI module.
+    # Linux exFAT build worker (see _image_worker_argv): no GUI, runs
+    # linux_image_builder with stdout piped back to the Build tab.
+    if len(sys.argv) >= 2 and sys.argv[1] == '--__exfat_image_worker__':
+        import linux_image_builder
+        sys.exit(linux_image_builder.main(sys.argv[2:]))
+
     if len(sys.argv) >= 2 and sys.argv[1] == '--__mkpfs_worker__':
         # Force UTF-8 on the real stdout/stderr before mkpfs runs. In a frozen
         # Windows build these default to the locale codec (CP1252), so mkpfs
