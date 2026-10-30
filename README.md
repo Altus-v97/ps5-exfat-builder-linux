@@ -1,6 +1,6 @@
 # 🎮 exFAT Image Builder for Linux
 
-**Build, Edit, Convert & Backport PS5 Game Images — on Linux**
+**Build, Convert & Backport PS5 Game Images — on Linux**
 
 Build • Convert • Backport • Deploy
 
