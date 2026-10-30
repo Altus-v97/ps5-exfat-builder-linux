@@ -27,8 +27,29 @@ from one modern interface.
 
 Designed for speed, reliability and ease of use.
 
-> 🐧 **Linux:** build with `./build_linux.sh` — see
-> [README_LINUX.md](README_LINUX.md) for setup and feature status.
+## 🐧 Linux download
+
+Grab the latest build from the
+[**Releases page**](https://github.com/Altus-v97/ps5-exfat-builder-linux/releases/latest)
+(x86-64; Ubuntu 20.04+, Mint 20+, Debian 11+, Fedora 32+ and similar):
+
+| File | Use it when |
+|---|---|
+| `exfat-image-builder_*_amd64.deb` | Debian / Ubuntu / Mint — `sudo apt install ./exfat-image-builder_*_amd64.deb`, then start **exFAT Image Builder** from the app menu |
+| `exfat-image-builder-*-linux-x86_64.tar.gz` | Any distro — unpack, run `./install.sh` (no root) |
+| `exfat-image-builder-linux-x86_64` | Just run it: `chmod +x exfat-image-builder-linux-x86_64 && ./exfat-image-builder-linux-x86_64` |
+
+Building images also needs `exfatprogs` plus `udisks2` or `exfat-fuse`
+(the `.deb` installs exfatprogs for you):
+
+```bash
+sudo apt install exfatprogs udisks2 exfat-fuse      # Debian / Ubuntu / Mint
+sudo dnf install exfatprogs udisks2 fuse-exfat      # Fedora
+sudo pacman -S exfatprogs udisks2 fuse-exfat        # Arch
+```
+
+FFPKG builds also need the .NET 8 runtime. Setup details, feature status and
+building from source: [README_LINUX.md](README_LINUX.md).
 
 > ⚠️ **Homebrew & Personal Backup Tool**
 >
